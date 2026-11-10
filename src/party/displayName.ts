@@ -8,7 +8,7 @@ export const deviceDisplayName = (): string => {
   const name = Device.deviceName?.trim();
   if (name) return name.slice(0, PARTY_DISPLAY_NAME_MAX);
   if (Device.modelName) return Device.modelName.slice(0, PARTY_DISPLAY_NAME_MAX);
-  return 'Flick user';
+  return 'CoFFe House user';
 };
 
 export const normalizePartyDisplayName = (raw: string): string => {

@@ -1,30 +1,30 @@
 {
   "expo": {
-    "name": "Flick",
+    "name": "CoFFe House",
     "slug": "flick",
-    "version": "0.0.0",
+    "version": "1.0",
     "orientation": "default",
-    "icon": "./assets/applogo/ic_launcher.png",
+    "icon": "./assets/applogo/ic_launcher.jpeg",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#000000",
     "scheme": "flick",
     "ios": {
       "supportsTablet": true,
-      "icon": "./assets/applogo/ic_launcher.png",
+      "icon": "./assets/applogo/ic_launcher.jpeg",
       "bundleIdentifier": "com.wfrdee.flick",
       "infoPlist": {
-        "NSCameraUsageDescription": "Flick uses the camera so you can join a watch-party video call.",
-        "NSMicrophoneUsageDescription": "Flick uses the microphone so you can join a watch-party video call.",
-        "NSDocumentsFolderUsageDescription": "Flick uses Documents to store and open downloaded videos.",
-        "NSDownloadsFolderUsageDescription": "Flick uses Downloads so you can save and open local files.",
-        "NSDesktopFolderUsageDescription": "Flick uses Desktop so you can open local video files.",
+        "NSCameraUsageDescription": "CoFFe House uses the camera so you can join a watch-party video call.",
+        "NSMicrophoneUsageDescription": "CoFFe House uses the microphone so you can join a watch-party video call.",
+        "NSDocumentsFolderUsageDescription": "CoFFe House uses Documents to store and open downloaded videos.",
+        "NSDownloadsFolderUsageDescription": "CoFFe House uses Downloads so you can save and open local files.",
+        "NSDesktopFolderUsageDescription": "CoFFe House uses Desktop so you can open local video files.",
         "LSSupportsOpeningDocumentsInPlace": true
       }
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#000000",
-        "foregroundImage": "./assets/applogo/ic_launcher_foreground.png",
+        "foregroundImage": "./assets/applogo/ic_launcher_foreground.jpeg",
         "backgroundImage": "./assets/applogo/ic_launcher_background.png",
         "monochromeImage": "./assets/applogo/ic_launcher_monochrome.png"
       },
@@ -67,8 +67,8 @@
       [
         "@config-plugins/react-native-webrtc",
         {
-          "cameraPermission": "Flick uses the camera so you can join a watch-party video call.",
-          "microphonePermission": "Flick uses the microphone so you can join a watch-party video call."
+          "cameraPermission": "CoFFe House uses the camera so you can join a watch-party video call.",
+          "microphonePermission": "CoFFe House uses the microphone so you can join a watch-party video call."
         }
       ]
     ]

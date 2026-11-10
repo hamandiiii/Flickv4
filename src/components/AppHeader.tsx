@@ -82,8 +82,8 @@ export const AppHeader = ({
         className="items-center space-between pt-3 pb-1"
         style={{ paddingHorizontal }}
       >
-        <Animated.View style={[{ width: 64, height: 32 }, logoStyle]}>
-          <FlickLogo width={64} height={32} />
+        <Animated.View style={[{ width: 120, height: 32 }, logoStyle]}>
+          <FlickLogo width={120} height={32} />
         </Animated.View>
         <HStack space="sm" className="items-center">
           <AnimatedText

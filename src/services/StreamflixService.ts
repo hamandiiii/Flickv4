@@ -305,13 +305,13 @@ const extractVideasy = async (
   const result =
     typeof decJson.result === 'string'
       ? (JSON.parse(decJson.result) as {
-          sources?: { url?: string }[];
-          subtitles?: { lang?: string; url?: string }[];
-        })
+        sources?: { url?: string }[];
+        subtitles?: { lang?: string; url?: string }[];
+      })
       : (decJson.result as {
-          sources?: { url?: string }[];
-          subtitles?: { lang?: string; url?: string }[];
-        });
+        sources?: { url?: string }[];
+        subtitles?: { lang?: string; url?: string }[];
+      });
   const url = result?.sources?.[0]?.url;
   if (!url || !/^https?:\/\//i.test(url)) {
     log('videasy: no source', source.name);
