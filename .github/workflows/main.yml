@@ -1,0 +1,63 @@
+- name: Install Node Dependencies
+        working-directory: src
+        run: npm install --legacy-peer-deps
+
+      - name: Write .env & patch env.ts (TMDB keys + versions)
+        working-directory: src
+        env:
+          APP_VERSION: ${{ needs.version.outputs.app_version }}
+          ANDROID_VERSION_CODE: ${{ needs.version.outputs.build_number }}
+        run: |
+          cat << EOF > .env
+          EXPO_PUBLIC_TMDB_API_KEY=10116fa302c8fe0c2cbc38be17aa65a5
+          EXPO_PUBLIC_TMDB_BASE_URL=https://api.themoviedb.org/3
+          EXPO_PUBLIC_TMDB_IMAGE_BASE_URL=https://image.tmdb.org/t/p/w500
+          EXPO_PUBLIC_TMDB_READ_ACCESS_TOKEN=eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIxMDExNmZhMzAyYzhmZTBjMmNiYzM4YmUxN2FhNjVhNSIsIm5iZiI6MTc4NzE0MjkzMy4wNiwic3ViamVjdCI6IjZkNWEzMTU0NmQzN2ZlMzYxNjc0NDEzIiwic2NvcGVzIjpbImFwaV9yZWFkIl0sInZlcnNpb24iOjF9.nHY8A-KhX4-MefoFpq7Wy32K5EVdn9uTsYkCfkcCi_I
+          EXPO_PUBLIC_WYZIE_BASE_URL=https://sub.wyzie.io
+          EXPO_PUBLIC_WYZIE_API_KEY=
+          EXPO_PUBLIC_SAMPLE_VIDEO_URL=https://media.w3.org/2010/05/sintel/trailer.mp4
+          EXPO_PUBLIC_WATCH_PARTY_URL=
+          TMDB_API_KEY=10116fa302c8fe0c2cbc38be17aa65a5
+          APP_VERSION=${APP_VERSION}
+          ANDROID_VERSION_CODE=${ANDROID_VERSION_CODE}
+          EOF
+
+          node -e '
+            const fs = require("fs");
+            const file = "src/config/env.ts";
+            if (fs.existsSync(file)) {
+              let content = fs.readFileSync(file, "utf8");
+              content = content.replace(/process\.env\.EXPO_PUBLIC_TMDB_API_KEY(\s*\|\|\s*["'"'"'"].*?["'"'"'"])?/g, "\"10116fa302c8fe0c2cbc38be17aa65a5\"");
+              content = content.replace(/process\.env\.EXPO_PUBLIC_TMDB_BASE_URL(\s*\|\|\s*["'"'"'"].*?["'"'"'"])?/g, "\"https://api.themoviedb.org/3\"");
+              content = content.replace(/process\.env\.EXPO_PUBLIC_TMDB_IMAGE_BASE_URL(\s*\|\|\s*["'"'"'"].*?["'"'"'"])?/g, "\"https://image.tmdb.org/t/p/w500\"");
+              fs.writeFileSync(file, content, "utf8");
+            }
+          '
+
+      # ✅ الخطوة الجديدة — توليد ios/ من Expo
+      - name: Prebuild iOS native project
+        working-directory: src
+        env:
+          APP_VERSION: ${{ needs.version.outputs.app_version }}
+          ANDROID_VERSION_CODE: ${{ needs.version.outputs.build_number }}
+        run: |
+          npx expo prebuild --platform ios --no-install --clean
+          ls -la ios/
+
+      - name: Configure Xcode Node Environment
+        working-directory: src
+        run: |
+          echo "export NODE_BINARY=$(which node)" > ios/.xcode.env.local
+          cat ios/.xcode.env.local
+
+      - name: Fix MMKV and Install CocoaPods
+        working-directory: src/ios
+        run: |
+          rm -f Podfile.lock
+          if ! grep -q "pod 'MMKV', '2.3.0'" Podfile; then
+            sed -i '' '/target '\''Flick'\'' do/a\
+              pod '\''MMKV'\'', '\''2.3.0'\''\
+              pod '\''MMKVCore'\'', '\''2.3.0'\''
+            ' Podfile
+          fi
+          pod install --repo-update
