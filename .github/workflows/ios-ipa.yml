@@ -19,7 +19,7 @@ on:
       build_number:
         description: 'CFBundleVersion (integer, must increase per install)'
         required: false
-        default: '20304'
+        default: '20305'
       xcode_version:
         description: 'Xcode version (26.4+ required: Swift 6.3 accepts expo-modules-core 57)'
         required: false
@@ -42,7 +42,7 @@ jobs:
     timeout-minutes: 90
     env:
       APP_VERSION: ${{ github.event.inputs.app_version || '2.3.4' }}
-      BUILD_NUMBER: ${{ github.event.inputs.build_number || '20304' }}
+      BUILD_NUMBER: ${{ github.event.inputs.build_number || '20305' }}
       XCODE_VERSION: ${{ github.event.inputs.xcode_version || '26.6' }}
 
     steps:
@@ -122,6 +122,60 @@ jobs:
             SWIFT_ENABLE_EXPLICIT_MODULES=NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
             build
+
+      # expo-modules-jsi ships ExpoModulesJSI as a *dynamic* xcframework but its
+      # podspec declares `static_framework = true`, so CocoaPods links against it
+      # without adding an embed phase. The binary then has
+      # `@rpath/ExpoModulesJSI.framework/ExpoModulesJSI` and crashes at launch
+      # (dyld: Library not loaded). Copy every linked-but-missing framework from
+      # XCFrameworkIntermediates into Flick.app/Frameworks before packaging.
+      - name: Embed missing dynamic frameworks
+        run: |
+          set -euo pipefail
+          APP="ios/build/DerivedData/Build/Products/Release-iphoneos/Flick.app"
+          test -d "$APP"
+          EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
+          BIN="$APP/$EXE"
+          XCI="ios/build/DerivedData/Build/Products/Release-iphoneos/XCFrameworkIntermediates"
+          mkdir -p "$APP/Frameworks"
+
+          echo "== frameworks already inside the app =="
+          ls -1 "$APP/Frameworks" || true
+
+          echo "== dynamic dependencies of $EXE =="
+          otool -L "$BIN" | awk 'NR>1 {print $1}' | sort -u > /tmp/rpath_deps.txt
+          cat /tmp/rpath_deps.txt
+
+          missing=0
+          while read -r dep; do
+            [ -n "$dep" ] || continue
+            case "$dep" in
+              @rpath/*.framework/*|@loader_path/*.framework/*|@executable_path/*.framework/*) ;;
+              *) continue ;;
+            esac
+            name="$(printf '%s' "$dep" | sed -E 's|^@[a-z_]+/([^/]+)\.framework/.*$|\1|')"
+            if [ -d "$APP/Frameworks/${name}.framework" ]; then
+              echo "ok (already embedded): ${name}.framework"
+              continue
+            fi
+            src="$(find "$XCI" -maxdepth 3 -type d -name "${name}.framework" -print -quit)"
+            if [ -z "$src" ]; then
+              echo "ERROR: ${name}.framework is linked but missing from XCFrameworkIntermediates" >&2
+              missing=$((missing + 1))
+              continue
+            fi
+            echo "embedding ${name}.framework  <-  $src"
+            cp -R "$src" "$APP/Frameworks/"
+          done < /tmp/rpath_deps.txt
+
+          if [ "$missing" -ne 0 ]; then
+            echo "ERROR: ${missing} linked framework(s) could not be embedded" >&2
+            exit 1
+          fi
+
+          echo "== final Frameworks =="
+          ls -1 "$APP/Frameworks"
+          test -f "$APP/Frameworks/ExpoModulesJSI.framework/ExpoModulesJSI"
 
       - name: Package IPA
         run: |
