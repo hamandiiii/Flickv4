@@ -20,6 +20,10 @@ on:
         description: 'CFBundleVersion (integer, must increase per install)'
         required: false
         default: '20304'
+      xcode_version:
+        description: 'Xcode version (26.4+ required: Swift 6.3 accepts expo-modules-core 57)'
+        required: false
+        default: '26.6'
   push:
     branches:
       - ci/ios-ipa
@@ -34,11 +38,12 @@ concurrency:
 jobs:
   build:
     name: Build unsigned IPA
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     env:
       APP_VERSION: ${{ github.event.inputs.app_version || '2.3.4' }}
       BUILD_NUMBER: ${{ github.event.inputs.build_number || '20304' }}
+      XCODE_VERSION: ${{ github.event.inputs.xcode_version || '26.6' }}
 
     steps:
       - name: Checkout
@@ -47,7 +52,7 @@ jobs:
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: ${{ env.XCODE_VERSION }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -84,6 +89,8 @@ jobs:
       - name: Install CocoaPods
         run: |
           set -euo pipefail
+          xcodebuild -version
+          swift --version
           gem install cocoapods --no-document || sudo gem install cocoapods --no-document
           pod --version
           cd ios
