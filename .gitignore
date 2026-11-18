@@ -64,3 +64,5 @@ web-export.log
 export-web.log
 # ad-hoc build logs at the repo root
 /*.log
+
+desktop/ui-probe/

@@ -127,6 +127,8 @@ export const PlayerControls = ({
       <HStack space="md" className="items-center px-8 pt-6">
         <Focusable
           onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
           className="rounded-full bg-background/40 p-2"
           focusedClassName={`bg-primary/20 ${TV_FOCUS_BORDER_CLASSNAME}`}
         >

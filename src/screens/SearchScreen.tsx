@@ -151,6 +151,7 @@ export const SearchScreen = () => {
         data={data}
         key={columns}
         numColumns={columns}
+        style={{ flex: 1 }}
         keyExtractor={(item) => `${item.media_type ?? ''}-${item.id}`}
         columnWrapperStyle={{ gap }}
         contentContainerStyle={{
@@ -201,7 +202,15 @@ export const SearchScreen = () => {
 
   return (
     <Box className="flex-1 bg-background" style={{ paddingTop: insets.top + 8 }}>
-      <Box style={{ paddingHorizontal: padding }}>
+      <Box
+        style={{
+          paddingHorizontal: padding,
+          // react-native-web defaults flex-shrink to 1 (Yoga uses 0), so the
+          // results list below would squash the search bar to a few pixels.
+          flexGrow: 0,
+          flexShrink: 0,
+        }}
+      >
         <Input className="mb-4 h-12 rounded-full bg-card">
           <InputSlot className="pl-3">
             <InputIcon as={SearchIcon} />

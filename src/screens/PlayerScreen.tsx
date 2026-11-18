@@ -641,6 +641,8 @@ export const PlayerScreen = ({
         </Center>
         <Pressable
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
           hitSlop={16}
           style={{ position: 'absolute', top: 24, left: 16, zIndex: 10 }}
         >
@@ -725,6 +727,8 @@ export const PlayerScreen = ({
       )}
       <Pressable
         onPress={() => navigation.goBack()}
+        accessibilityRole="button"
+        accessibilityLabel="Back"
         hitSlop={16}
         style={{ position: 'absolute', top: 24, left: 16, zIndex: 10 }}
       >

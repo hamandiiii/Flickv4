@@ -99,9 +99,15 @@ export const ViewMoreScreen = ({
 
   return (
     <Box className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
-      <HStack space="md" className="items-center px-4 py-3">
+      <HStack
+        space="md"
+        className="items-center px-4 py-3"
+        style={{ flexGrow: 0, flexShrink: 0 }}
+      >
         <Focusable
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
           hitSlop={12}
           className="rounded-full"
           focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
@@ -127,6 +133,7 @@ export const ViewMoreScreen = ({
           data={items}
           key={columns}
           numColumns={columns}
+          style={{ flex: 1 }}
           keyExtractor={keyOf}
           columnWrapperStyle={{ gap }}
           contentContainerStyle={{

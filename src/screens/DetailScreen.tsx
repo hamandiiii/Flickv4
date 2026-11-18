@@ -1126,6 +1126,8 @@ export const DetailScreen = ({
         >
           <Focusable
             onPress={() => navigation.goBack()}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
             className="rounded-full bg-background/60 p-2"
             focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
           >

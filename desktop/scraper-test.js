@@ -137,9 +137,20 @@ app.whenReady().then(async () => {
     el.setAttribute('src', 'about:blank');
     document.body.appendChild(el);
 
+    // getWebContentsId() throws until BOTH did-attach and dom-ready have
+    // fired, and did-attach alone is not enough on Electron 38.
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('guest never attached')), 10000);
-      el.addEventListener('did-attach', () => { clearTimeout(timer); resolve(); }, { once: true });
+      const timer = setTimeout(() => reject(new Error('guest never attached')), 15000);
+      let attached = false;
+      let ready = false;
+      const done = () => {
+        if (attached && ready) {
+          clearTimeout(timer);
+          resolve();
+        }
+      };
+      el.addEventListener('did-attach', () => { attached = true; done(); }, { once: true });
+      el.addEventListener('dom-ready', () => { ready = true; done(); }, { once: true });
     });
 
     const id = el.getWebContentsId();

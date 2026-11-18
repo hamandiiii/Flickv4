@@ -200,6 +200,8 @@ export const LivePlayerScreen = ({
       {error && !loading ? (
         <Pressable
           onPress={handleBack}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
           hitSlop={16}
           style={{ position: 'absolute', top: 24, left: 16, zIndex: 10 }}
         >

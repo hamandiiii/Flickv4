@@ -186,6 +186,8 @@ export const DetailScreenTV = ({
             />
             <Focusable
               onPress={onBack}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
               className="absolute rounded-full bg-background/60 p-3"
               focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
               style={{ top: insets.top + 24, left: contentPadding }}

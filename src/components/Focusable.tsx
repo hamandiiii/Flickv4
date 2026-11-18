@@ -1,5 +1,11 @@
 import { forwardRef, useState, type ReactNode } from 'react';
-import type { Insets, StyleProp, ViewStyle } from 'react-native';
+import type {
+  AccessibilityRole,
+  AccessibilityState,
+  Insets,
+  StyleProp,
+  ViewStyle,
+} from 'react-native';
 import { Pressable } from '@/components/ui/pressable';
 import { isTV } from '@/src/utils/tv';
 
@@ -17,6 +23,15 @@ interface FocusableProps {
   style?: StyleProp<ViewStyle>;
   /** Fires whenever this element gains/loses TV focus. Useful for parents that need to react (e.g. a collapsible rail expanding while one of its rows is focused). */
   onFocusChange?: (focused: boolean) => void;
+  /**
+   * Screen-reader / automation label. Icon-only buttons (back arrows, player
+   * controls) are invisible to assistive tech and to the desktop UI probe
+   * without it.
+   */
+  accessibilityLabel?: string;
+  accessibilityRole?: AccessibilityRole;
+  accessibilityHint?: string;
+  accessibilityState?: AccessibilityState;
 }
 
 /**
@@ -37,6 +52,10 @@ export const Focusable = forwardRef<
     hitSlop,
     style,
     onFocusChange,
+    accessibilityLabel,
+    accessibilityRole,
+    accessibilityHint,
+    accessibilityState,
   },
   ref,
 ) {
@@ -49,6 +68,10 @@ export const Focusable = forwardRef<
       hasTVPreferredFocus={hasTVPreferredFocus}
       hitSlop={hitSlop}
       style={style}
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole={accessibilityRole}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={accessibilityState}
       onPress={onPress}
       onLongPress={onLongPress}
       onFocus={() => {

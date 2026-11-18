@@ -50,6 +50,8 @@ export const PlaybackPerformanceScreen = () => {
       <HStack space="md" className="items-center px-4 py-3">
         <Focusable
           onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
           hitSlop={12}
           className="rounded-full"
           focusedClassName={TV_FOCUS_BORDER_CLASSNAME}

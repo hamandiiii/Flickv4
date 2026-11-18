@@ -134,3 +134,26 @@
   --color-accent: rgb(var(--accent));
   --color-accent-foreground: rgb(var(--accent-foreground));
 }
+
+/* React Native `pointerEvents` for the plain-div web primitives.
+   `components/ui/*.web.tsx` render <div>s, so the RN prop is otherwise
+   dropped and full-screen overlays swallow clicks meant for the controls
+   underneath them. Keep these outside @layer so they always apply. */
+.rn-pe-none {
+  pointer-events: none;
+}
+.rn-pe-auto {
+  pointer-events: auto;
+}
+.rn-pe-box-none {
+  pointer-events: none;
+}
+.rn-pe-box-none > * {
+  pointer-events: auto;
+}
+.rn-pe-box-only {
+  pointer-events: auto;
+}
+.rn-pe-box-only > * {
+  pointer-events: none;
+}

@@ -227,6 +227,8 @@ export const PlayerSettingsDrawer = ({
             {activeCategory != null && (
               <Focusable
                 onPress={() => setActiveCategory(null)}
+                accessibilityRole="button"
+                accessibilityLabel="Back"
                 className="rounded-full p-1"
                 focusedClassName={`bg-primary/20 ${TV_FOCUS_BORDER_CLASSNAME}`}
               >
