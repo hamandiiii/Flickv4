@@ -10,6 +10,7 @@ const storageListeners = new Set();
 const scraperListeners = new Set();
 const downloadListeners = new Set();
 const preferencesListeners = new Set();
+const compatListeners = new Set();
 
 ipcRenderer.on('desktop:storage-changed', (_event, payload) => {
   for (const fn of storageListeners) {
@@ -43,6 +44,16 @@ ipcRenderer.on('desktop:downloadProgress', (_event, payload) => {
 
 ipcRenderer.on('desktop:preferences-changed', (_event, payload) => {
   for (const fn of preferencesListeners) {
+    try {
+      fn(payload);
+    } catch {
+      /* listener errors must not break the bridge */
+    }
+  }
+});
+
+ipcRenderer.on('desktop:compatProgress', (_event, payload) => {
+  for (const fn of compatListeners) {
     try {
       fn(payload);
     } catch {
@@ -129,4 +140,22 @@ contextBridge.exposeInMainWorld('coffeDesktop', {
    */
   saveSubtitle: (request) =>
     ipcRenderer.invoke('desktop:saveSubtitle', request),
+
+  // --- FFmpeg compatibility engine -----------------------------------------
+  /**
+   * Asks the shell for a playable URL after the browser player failed.
+   * Resolves `{ ok, url, kind, mode }` (proxied HLS, live relay, converted
+   * local MP4) or `{ ok: false, error }`.
+   */
+  preparePlayback: (request) =>
+    ipcRenderer.invoke('desktop:preparePlayback', request),
+  /** Stops a conversion/relay for a source (called when the player unmounts). */
+  compatCancel: (source) => ipcRenderer.invoke('desktop:compatCancel', source),
+  /** `{ ffmpeg, jobs, sessions }` — diagnostics for the settings screen. */
+  compatStatus: () => ipcRenderer.invoke('desktop:compatStatus'),
+  /** Subscribe to conversion/relay progress (`{ source, phase, percent }`). */
+  onCompatProgress: (fn) => {
+    compatListeners.add(fn);
+    return () => compatListeners.delete(fn);
+  },
 });

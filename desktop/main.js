@@ -32,6 +32,7 @@ const path = require('path');
 const { Readable, Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const scraperBridge = require('./scraper-bridge');
+const { createMediaRelay } = require('./media-relay');
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -181,7 +182,7 @@ const MIME = {
  * Serve a file, honouring `Range` so the HTML `<video>` element can seek
  * inside downloaded media (and so hls.js can fetch individual segments).
  */
-function sendFile(req, res, filePath) {
+function sendFile(req, res, filePath, options = {}) {
   const ext = path.extname(filePath).toLowerCase();
   const type = MIME[ext] || 'application/octet-stream';
   let size = 0;
@@ -198,9 +199,10 @@ function sendFile(req, res, filePath) {
     'Accept-Ranges': 'bytes',
     'Access-Control-Allow-Origin': '*',
     'Cache-Control':
-      ext === '.html' || ext === '.m3u8'
+      options.cacheControl ||
+      (ext === '.html' || ext === '.m3u8'
         ? 'no-store'
-        : 'public, max-age=31536000, immutable',
+        : 'public, max-age=31536000, immutable'),
   };
 
   const range = req.headers.range;
@@ -235,6 +237,24 @@ function sendFile(req, res, filePath) {
 }
 
 /**
+ * FFmpeg compatibility engine: probes downloads/streams and converts what
+ * Chromium cannot decode (MKV, HEVC, AC3/DTS), plus a header-aware HLS proxy
+ * for origins that reject bare requests. It registers its own loopback routes
+ * (`/__hls`, `/__relay`, `/__compat`) and reports progress over IPC.
+ */
+const mediaRelay = createMediaRelay({
+  downloadRoot,
+  compatRoot: () => path.join(storageDir(), 'compat'),
+  send: (channel, payload) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(channel, payload);
+    }
+  },
+  sendFile,
+  log: (...args) => console.log('[coffe:media]', ...args),
+});
+
+/**
  * Fixed port for the loopback server.
  *
  * The renderer's origin is `http://127.0.0.1:<port>`, and everything the app
@@ -263,6 +283,9 @@ function startStaticServer() {
         serveMedia(req, res, pathname);
         return;
       }
+
+      // FFmpeg compatibility routes: proxied HLS, live relay, converted files.
+      if (mediaRelay.handleRequest(req, res, pathname)) return;
 
       // Prevent path traversal outside WEB_ROOT.
       const rel = pathname.replace(/^\/+/, '');
@@ -1147,6 +1170,36 @@ function registerIpc() {
     const error = await shell.openPath(target);
     return { ok: !error, error };
   });
+
+  /**
+   * Compatibility engine. The renderer calls this after a `<video>`/hls.js
+   * failure; the shell answers with a URL that Chromium can actually play
+   * (proxied HLS, live relay, or a converted local MP4).
+   */
+  ipcMain.handle('desktop:preparePlayback', async (_event, request) => {
+    if (!request || typeof request !== 'object' || typeof request.url !== 'string') {
+      return { ok: false, error: 'Invalid playback request' };
+    }
+    try {
+      return await mediaRelay.preparePlayback({
+        url: request.url,
+        headers:
+          request.headers && typeof request.headers === 'object'
+            ? request.headers
+            : undefined,
+        kind: request.kind === 'hls' ? 'hls' : undefined,
+        mode: request.mode === 'proxy' || request.mode === 'relay' ? request.mode : undefined,
+      });
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('desktop:compatCancel', (_event, source) =>
+    mediaRelay.cancel(typeof source === 'string' ? source : ''),
+  );
+
+  ipcMain.handle('desktop:compatStatus', () => mediaRelay.status());
 }
 
 // ---------------------------------------------------------------------------
@@ -1236,6 +1289,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     app.isQuitting = true;
     scraperBridge.detachAll();
+    mediaRelay.dispose();
     destroyTray();
   });
 }

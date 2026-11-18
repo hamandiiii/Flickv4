@@ -11,6 +11,7 @@ the main process only adds what a browser cannot do.
 | Play `.m3u8` | `react-native-video` (ExoPlayer/AVPlayer) | `hls.js` over MSE — Chromium has no native HLS |
 | Scrape stream embeds | `react-native-webview` + `injectedJavaScript` | `<webview>` + CDP `Page.addScriptToEvaluateOnNewDocument` |
 | Save downloads | `expo-file-system` + background downloader | Node `fs` in the main process |
+| Play MKV / HEVC / AC3 | ExoPlayer/AVPlayer codecs | bundled `ffmpeg` → remux/transcode/HLS relay |
 | Persist settings | AsyncStorage (SQLite/RocksDB) | AsyncStorage → `localStorage` |
 
 ## Files
@@ -18,11 +19,12 @@ the main process only adds what a browser cannot do.
 ```
 desktop/
   main.js              Electron main: static server, IPC, menus, download engine
+  media-relay.js       FFmpeg compatibility engine (probe, remux/transcode, HLS proxy/relay)
   preload.js           window.coffeDesktop bridge (contextIsolation, no node in renderer)
   scraper-bridge.js    CDP injection for <webview> guests
   package.json         electron-builder config (MSI + NSIS)
   build/icon.png       app/installer/tray icon (checked in — un-ignored in .gitignore)
-  *-test.js            dev probes, run with the local electron binary
+  *-test.js            dev probes, run with the local electron binary (compat-test.js is plain node)
 ```
 
 Renderer-side platform splits live in `src/` and only apply on web:
@@ -78,6 +80,27 @@ shortcuts and window title are unchanged.
   fetched from the Vdrk catalog (keyless) with Wyzie as a second source and
   written to `<folder>/subs/<lang>.vtt`, served through `/__media/` like the
   video. Soft-fails — the video stays playable without captions.
+- **Compatibility engine (FFmpeg).** The player first tries plain Chromium
+  (`<video>` / hls.js). On failure it asks the shell
+  (`coffeDesktop.preparePlayback`) for a playable variant, in this order:
+  1. **HLS proxy** (`/__hls/<session>/<token>`) — re-requests the playlist and
+     segments with the app's `Referer`/`Origin`/`Cookie` headers and a cookie
+     jar, rewrites every URI back through the loopback server, and drops HEVC
+     renditions when a decodable one exists. Fixes "403 / infinite buffering"
+     playlists without touching the video.
+  2. **Local conversion** (`/__compat/<key>/video.mp4`) — downloaded files are
+     probed with `ffmpeg -i`; H.264 is remuxed with `-c:v copy`, HEVC is
+     re-encoded with `libx264`, AC3/E-AC3/DTS audio becomes stereo AAC, and the
+     result is a `+faststart` MP4 with full `Range` seeking. Keyed by path +
+     size + mtime, so a second play is instant.
+  3. **Live relay** (`/__relay/<key>/index.m3u8`) — last resort for remote
+     MKV or HEVC-only ladders: ffmpeg transcodes to H.264/AAC and writes a
+     growing event playlist that hls.js plays as it appears.
+
+  Progress is streamed to the renderer (`desktop:compatProgress`) and shown as
+  a "Preparing playback" overlay. Conversions land in `<storage>/compat/`.
+  `ffmpeg-static` is a GPL build (x264/x265); bundling it in a distributed app
+  carries GPL obligations.
 
 ## Build
 
@@ -108,8 +131,13 @@ cd desktop
 .\node_modules\electron\dist\electron.exe persistence-test.js --read
 .\node_modules\electron\dist\electron.exe smoke-test.js
 .\node_modules\electron\dist\electron.exe scraper-test.js
+node compat-test.js                                            # 17 checks (ffmpeg engine)
 node packaged-test.js                                          # the built EXE
 ```
+
+`compat-test.js` is plain Node (no Electron): it generates HEVC/AC3 fixtures,
+converts them, and drives the HLS proxy/relay against a Referer-protected test
+origin.
 
 TypeScript must be run with a bigger stack — `npx tsc` overflows on this
 project:
@@ -125,3 +153,11 @@ node --stack-size=16000 node_modules/typescript/lib/tsc.js --noEmit
   (*More info → Run anyway*).
 - Resume keeps bytes only when the stream URL is unchanged; a job whose server
   URL changed restarts from scratch.
+- **Relay seeking is best-effort.** The live relay produces segments as fast as
+  the CPU allows; seeking forward past the produced range waits for ffmpeg.
+  Local files are converted to a finished MP4 first, so they seek normally.
+- **Conversion needs disk + CPU.** A HEVC movie is re-encoded into
+  `<storage>/compat/`; 4K sources are slow without hardware encoding. Files are
+  cached by path/size/mtime and can be deleted from the storage folder.
+- **GPL notice.** `ffmpeg-static` ships an ffmpeg build with x264/x265 (GPL).
+  Distributing the installer publicly requires complying with the GPL.

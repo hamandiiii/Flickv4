@@ -15,12 +15,15 @@
  *
  *   node desktop/packaged-test.js
  */
-const { spawn } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
+const os = require('os');
 const path = require('path');
 const fs = require('fs');
 
-const EXE = path.join(__dirname, 'release', 'win-unpacked', 'CoFFe House stream.exe');
-const PORT = 9333;
+const EXE =
+  process.env.COFFE_EXE ||
+  path.join(__dirname, 'release', 'win-unpacked', 'CoFFe House stream.exe');
+const PORT = Number(process.env.COFFE_CDP_PORT || 9333);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function waitForTarget(timeoutMs = 60000) {
@@ -158,6 +161,91 @@ function evaluate(ws, id, expression) {
     );
     console.log(`${hasHls ? 'PASS' : 'FAIL'}  hls.js in shipped bundle — ${hasHls}`);
     ok = ok && hasHls === true;
+
+    // -----------------------------------------------------------------------
+    // FFmpeg compatibility engine, driven through the packaged app.
+    //
+    // A real HEVC + AC3 Matroska file is dropped into `<storage>/downloads`
+    // (exactly where the download engine puts completed jobs), then the
+    // renderer asks the shell to make it playable. That exercises the whole
+    // chain: bundled ffmpeg discovery -> probe -> libx264/AAC transcode ->
+    // `/__compat/` route with Range seeking.
+    // -----------------------------------------------------------------------
+    const compatStatus = await evaluate(ws, 3, 'window.coffeDesktop.compatStatus()');
+    const ffmpegPath = compatStatus && compatStatus.ffmpeg;
+    const ffmpegOk =
+      typeof ffmpegPath === 'string' &&
+      /resources[\\/]ffmpeg[\\/]ffmpeg\.exe$/i.test(ffmpegPath) &&
+      fs.existsSync(ffmpegPath);
+    console.log(`${ffmpegOk ? 'PASS' : 'FAIL'}  bundled ffmpeg resolved — ${ffmpegPath}`);
+    ok = ok && ffmpegOk;
+
+    let compatDetail = 'not attempted';
+    let compatPass = false;
+    let cleanupDir = '';
+    try {
+      const storage = await evaluate(ws, 4, 'window.coffeDesktop.getStorage()');
+      const probeDir = path.join(storage.dir, 'downloads', 'compat-probe');
+      cleanupDir = probeDir;
+      fs.mkdirSync(probeDir, { recursive: true });
+      const fixture = path.join(probeDir, 'sample-hevc-ac3.mkv');
+      if (!fs.existsSync(fixture)) {
+        const ffmpegBin = ffmpegPath || require('./media-relay').findFfmpeg();
+        execFileSync(
+          ffmpegBin,
+          [
+            '-y', '-hide_banner', '-loglevel', 'error',
+            '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=25',
+            '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
+            '-t', '4',
+            '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'log-level=error',
+            '-c:a', 'ac3', '-b:a', '192k', '-ac', '2',
+            fixture,
+          ],
+          { stdio: 'pipe', windowsHide: true },
+        );
+      }
+
+      const mediaUrl = `${state.origin}/__media/compat-probe/sample-hevc-ac3.mkv`;
+      const prepared = await evaluate(
+        ws,
+        5,
+        `window.coffeDesktop.preparePlayback({ url: ${JSON.stringify(mediaUrl)} })`,
+      );
+      if (!prepared || !prepared.ok) {
+        compatDetail = JSON.stringify(prepared);
+      } else {
+        const convertedUrl = `${state.origin}${prepared.url}`;
+        const full = await fetch(convertedUrl);
+        const bytes = Buffer.from(await full.arrayBuffer());
+        const ranged = await fetch(convertedUrl, { headers: { Range: 'bytes=0-99' } });
+        compatPass =
+          prepared.mode === 'transcode' &&
+          /^\/__compat\/[a-f0-9]+\/video\.mp4$/.test(prepared.url) &&
+          full.status === 200 &&
+          bytes.length > 50000 &&
+          bytes.slice(4, 8).toString('latin1') === 'ftyp' &&
+          ranged.status === 206 &&
+          ranged.headers.get('content-range') !== null;
+        compatDetail =
+          `${prepared.mode} ${prepared.url} ` +
+          `${(bytes.length / 1024).toFixed(0)}KB range=${ranged.status}`;
+      }
+    } catch (error) {
+      compatDetail = error.message;
+    } finally {
+      if (cleanupDir) {
+        try {
+          fs.rmSync(cleanupDir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+    console.log(
+      `${compatPass ? 'PASS' : 'FAIL'}  HEVC/AC3 transcoded through the packaged app — ${compatDetail}`,
+    );
+    ok = ok && compatPass;
 
     ws.close();
   } catch (error) {

@@ -84,6 +84,51 @@ export interface DesktopDownloadStartResult {
   error?: string;
 }
 
+/** How the compatibility engine made a source playable. */
+export type DesktopCompatMode =
+  | 'passthrough'
+  | 'proxy'
+  | 'transcode'
+  | 'relay';
+
+export interface DesktopPreparePlaybackRequest {
+  /** Original source URL (remote stream or the shell's `/__media/...` URL). */
+  url: string;
+  /** Headers the stream origin requires (Referer/Origin/Cookie/...). */
+  headers?: Record<string, string>;
+  /** `hls` lets the shell treat an extension-less playlist URL correctly. */
+  kind?: 'hls';
+  /** Force the live relay instead of trying the header proxy first. */
+  mode?: 'proxy' | 'relay';
+}
+
+export interface DesktopPreparePlaybackResult {
+  ok: boolean;
+  /** Playable URL to hand back to the player (relative to the shell origin). */
+  url?: string;
+  kind?: 'hls' | 'file';
+  mode?: DesktopCompatMode;
+  /** True when a previous conversion was reused from disk. */
+  cached?: boolean;
+  error?: string;
+}
+
+export interface DesktopCompatProgress {
+  /** Original source URL this conversion belongs to. */
+  source: string;
+  phase: 'transcode' | 'relay' | 'done' | 'error';
+  /** 0-100 while converting; `null`/absent for an indeterminate relay. */
+  percent?: number | null;
+  message?: string;
+}
+
+export interface DesktopCompatStatus {
+  /** Absolute path of the bundled ffmpeg binary, or null when missing. */
+  ffmpeg: string | null;
+  jobs: Array<{ source: string; kind: 'transcode' | 'relay' }>;
+  sessions: number;
+}
+
 export interface CoffeDesktopBridge {
   isDesktop: true;
   platform: string;
@@ -122,6 +167,16 @@ export interface CoffeDesktopBridge {
   saveSubtitle(
     request: DesktopSaveSubtitleRequest,
   ): Promise<{ ok: boolean; file?: string; error?: string }>;
+  /** FFmpeg compatibility engine: resolve a playable URL after a failure. */
+  preparePlayback(
+    request: DesktopPreparePlaybackRequest,
+  ): Promise<DesktopPreparePlaybackResult>;
+  /** Stops a conversion/relay for a source (player unmounted). */
+  compatCancel(source: string): Promise<boolean>;
+  /** Diagnostics for the settings screen. */
+  compatStatus(): Promise<DesktopCompatStatus>;
+  /** Subscribe to conversion/relay progress. */
+  onCompatProgress(fn: (progress: DesktopCompatProgress) => void): () => void;
 }
 
 declare global {
