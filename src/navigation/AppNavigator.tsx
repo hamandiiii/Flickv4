@@ -16,6 +16,7 @@ import { VideoAspectSettingsScreen } from '@/src/screens/VideoAspectSettingsScre
 import { RegionSettingsScreen } from '@/src/screens/RegionSettingsScreen';
 import { DnsSettingsScreen } from '@/src/screens/DnsSettingsScreen';
 import { ThemeSettingsScreen } from '@/src/screens/ThemeSettingsScreen';
+import { StorageSettingsScreen } from '@/src/screens/StorageSettingsScreen';
 import { PlaybackPerformanceScreen } from '@/src/screens/PlaybackPerformanceScreen';
 import { DisclaimerScreen } from '@/src/screens/DisclaimerScreen';
 import { CreditsScreen } from '@/src/screens/CreditsScreen';
@@ -91,6 +92,10 @@ export const AppNavigator = () => {
         <Stack.Screen name="RegionSettings" component={RegionSettingsScreen} />
 <Stack.Screen name="DnsSettings" component={DnsSettingsScreen} />
 <Stack.Screen name="ThemeSettings" component={ThemeSettingsScreen} />
+        <Stack.Screen
+          name="StorageSettings"
+          component={StorageSettingsScreen}
+        />
         <Stack.Screen
           name="PlaybackPerformance"
           component={PlaybackPerformanceScreen}

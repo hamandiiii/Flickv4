@@ -18,6 +18,8 @@ export type RootStackParamList = {
   RegionSettings: undefined;
   DnsSettings: undefined;
   ThemeSettings: undefined;
+  /** Windows desktop shell only — hidden elsewhere. */
+  StorageSettings: undefined;
   PlaybackPerformance: undefined;
   Disclaimer: undefined;
   Credits: undefined;

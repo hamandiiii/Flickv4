@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, StatusBar, StyleSheet, useWindowDimensions } from 'react-native';
-import Video, { type ReactVideoSource } from 'react-native-video';
+import type { ReactVideoSource } from 'react-native-video';
+import Video from '@/src/components/player/VideoPlayer';
 import { useKeepAwake } from 'expo-keep-awake';
 import { NavigationBar } from 'expo-navigation-bar';
 import { ArrowLeft, VideoOff } from 'lucide-react-native';

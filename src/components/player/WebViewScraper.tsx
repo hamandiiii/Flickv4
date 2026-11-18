@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import { WebView } from 'react-native-webview';
-import type {
-  WebViewMessageEvent,
-  WebViewErrorEvent,
-} from 'react-native-webview/lib/WebViewTypes';
 import { buildEmbedUrl, type ServerUrlConfig } from '@/src/utils/streamUrl';
 import { DEFAULT_SCRAPER_TIMEOUT_SECONDS } from '@/src/hooks/useServers';
+import { ScraperWebView } from './ScraperWebView';
 
 export interface ExtractedStream {
   videoUrl: string;
@@ -942,10 +938,10 @@ export const WebViewScraper = ({
 
   // Handle messages posted from the page.
   const handleMessage = useCallback(
-    (event: WebViewMessageEvent) => {
+    (payload: string) => {
       let data: MessageData;
       try {
-        data = JSON.parse(event.nativeEvent.data) as MessageData;
+        data = JSON.parse(payload) as MessageData;
       } catch (error) {
         log('failed to parse message:', error);
         onError?.('Failed to parse video data');
@@ -987,9 +983,8 @@ export const WebViewScraper = ({
   }, [timeoutMs, onLoading, onError]);
 
   const handleError = useCallback(
-    (event: WebViewErrorEvent) => {
-      const { nativeEvent } = event;
-      log('WebView error:', nativeEvent.code, nativeEvent.description);
+    (message: string) => {
+      log('WebView error:', message);
       if (loadingTimerRef.current) {
         clearTimeout(loadingTimerRef.current);
         loadingTimerRef.current = null;
@@ -998,6 +993,16 @@ export const WebViewScraper = ({
       onError?.('WebView load error');
     },
     [onLoading, onError],
+  );
+
+  // Native media loads (esp. iOS HLS) sometimes surface as a navigation
+  // instead of going through the page's fetch/XHR hooks.
+  const handleNavigate = useCallback(
+    (url: string) => {
+      log('navigation:', url);
+      extractFromUrl(url);
+    },
+    [extractFromUrl],
   );
 
   // Cleanup on unmount.
@@ -1014,48 +1019,17 @@ export const WebViewScraper = ({
 
   return (
     <View style={containerStyle} pointerEvents={visible ? 'auto' : 'none'}>
-      <WebView
-        key={webViewKey}
-        source={{ uri: embedUrl }}
-        // Present as a normal mobile browser so Cloudflare's JS challenge runs.
+      <ScraperWebView
+        webViewKey={webViewKey}
+        embedUrl={embedUrl}
         userAgent={USER_AGENT}
-        applicationNameForUserAgent="Chrome/126.0.0.0"
         injectedJavaScript={injectedJavaScript}
-        // Patch fetch/XHR/<video>.src before the page's own JS runs so we
-        // catch VidLink's /api/b/* JSON and the subsequent playlist request.
-        injectedJavaScriptBeforeContentLoaded={injectedJavaScript}
-        injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
-        // Inject into nested (cross-origin) iframes too - the stream request
-        // originates inside the embedded player frame, not the top document.
-        injectedJavaScriptForMainFrameOnly={false}
+        visible={visible}
         onMessage={handleMessage}
         onLoadStart={handleLoadStart}
         onLoadEnd={handleLoadEnd}
         onError={handleError}
-        onShouldStartLoadWithRequest={(req) => {
-          log('navigation:', req.url);
-          // Native media loads (esp. iOS HLS) sometimes show up here
-          // instead of going through the page's fetch/XHR hooks.
-          extractFromUrl(req.url);
-          return true;
-        }}
-        javaScriptEnabled
-        domStorageEnabled
-        startInLoadingState
-        allowsInlineMediaPlayback
-        mediaPlaybackRequiresUserAction={false}
-        // Cookies must persist so the Cloudflare `cf_clearance` cookie set after
-        // the challenge is reused on later requests (bypassing repeat checks).
-        thirdPartyCookiesEnabled
-        sharedCookiesEnabled
-        // Let the interactive challenge open in the same view.
-        setSupportMultipleWindows={false}
-        originWhitelist={['*']}
-        style={
-          visible
-            ? StyleSheet.absoluteFill
-            : [StyleSheet.absoluteFill, styles.webviewHidden]
-        }
+        onNavigate={handleNavigate}
       />
     </View>
   );
@@ -1063,19 +1037,13 @@ export const WebViewScraper = ({
 
 const styles = StyleSheet.create({
   // Fully transparent + non-interactive, but sized like a real screen (NOT
-  // 1x1 — see the class doc comment above for why that broke some servers).
+  // 1x1 - see the class doc comment above for why that broke some servers).
   hidden: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    opacity: 0,
-  },
-  // Android often ignores opacity on a parent View wrapping a WebView, so
-  // hide the WebView itself too — otherwise ScreenScape's control bar is
-  // visible during a scrape and our auto-click hits its server switcher.
-  webviewHidden: {
     opacity: 0,
   },
 });

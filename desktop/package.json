@@ -1,0 +1,65 @@
+{
+  "name": "coffe-house-desktop",
+  "productName": "CoFFe House",
+  "version": "1.1.0",
+  "private": true,
+  "description": "CoFFe House for Windows",
+  "author": "CoFFe House",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64",
+    "dist:msi": "electron-builder --win msi --x64",
+    "dist:nsis": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^38.8.6",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.coffehouse.app.desktop",
+    "productName": "CoFFe House",
+    "copyright": "CoFFe House",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "scraper-bridge.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist-web",
+        "to": "web",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "msi"
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "CoFFeHouse-Setup-${version}.${ext}"
+    },
+    "msi": {
+      "oneClick": false,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CoFFe House"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CoFFe House"
+    }
+  }
+}

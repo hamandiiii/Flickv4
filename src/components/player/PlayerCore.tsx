@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StatusBar, StyleSheet, useWindowDimensions } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
-import Video, {
+import {
   SelectedTrackType,
   SelectedVideoTrackType,
   TextTrackType,
@@ -18,6 +18,7 @@ import Video, {
   type TextTracks,
   type VideoRef,
 } from 'react-native-video';
+import Video from '@/src/components/player/VideoPlayer';
 import { Box } from '@/components/ui/box';
 import { Center } from '@/components/ui/center';
 import { Spinner } from '@/components/ui/spinner';

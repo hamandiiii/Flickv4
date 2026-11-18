@@ -8,6 +8,9 @@ node_modules/
 dist/
 web-build/
 build/
+# ...but the desktop installer's icon is a checked-in build resource.
+!desktop/build/
+!desktop/build/**
 *.ipa
 expo-env.d.ts
 
@@ -50,3 +53,14 @@ streamflix-main/*
 
 flixquest-scraper-main/*
 flixquest-main/*
+# Desktop (Electron) build artifacts
+dist-web/
+desktop/node_modules/
+desktop/release/
+desktop-install.log
+desktop/smoke/
+desktop/*.log
+web-export.log
+export-web.log
+# ad-hoc build logs at the repo root
+/*.log
