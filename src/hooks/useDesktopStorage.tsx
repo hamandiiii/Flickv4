@@ -25,6 +25,10 @@ export interface UseDesktopStorage {
   openFolder(): Promise<void>;
   /** Re-reads the current value from the shell. */
   refresh(): Promise<void>;
+  /** Closing the window hides the app to the notification area. */
+  closeToTray: boolean;
+  /** Persists the close-to-tray preference in the shell. */
+  setCloseToTray(value: boolean): Promise<void>;
 }
 
 /**
@@ -38,6 +42,7 @@ export const useDesktopStorage = (): UseDesktopStorage => {
   const [info, setInfo] = useState<DesktopStorageInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [closeToTray, setCloseToTrayState] = useState(true);
 
   const refresh = useCallback(async () => {
     const bridge = typeof window !== 'undefined' ? window.coffeDesktop : undefined;
@@ -58,6 +63,27 @@ export const useDesktopStorage = (): UseDesktopStorage => {
       setError(null);
     });
   }, [refresh]);
+
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? window.coffeDesktop : undefined;
+    if (!bridge?.getPreferences) return;
+    let active = true;
+    void bridge
+      .getPreferences()
+      .then((prefs) => {
+        if (active) setCloseToTrayState(prefs.closeToTray !== false);
+      })
+      .catch(() => {
+        /* keep the default */
+      });
+    const off = bridge.onPreferencesChanged?.((prefs) => {
+      setCloseToTrayState(prefs.closeToTray !== false);
+    });
+    return () => {
+      active = false;
+      off?.();
+    };
+  }, []);
 
   const choose = useCallback(async () => {
     const bridge = typeof window !== 'undefined' ? window.coffeDesktop : undefined;
@@ -122,6 +148,20 @@ export const useDesktopStorage = (): UseDesktopStorage => {
     }
   }, []);
 
+  const setCloseToTray = useCallback(async (value: boolean) => {
+    const bridge = typeof window !== 'undefined' ? window.coffeDesktop : undefined;
+    if (!bridge?.setPreferences) return;
+    // Optimistic: the switch should not lag behind the tap.
+    setCloseToTrayState(value);
+    try {
+      const prefs = await bridge.setPreferences({ closeToTray: value });
+      setCloseToTrayState(prefs.closeToTray !== false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setCloseToTrayState(!value);
+    }
+  }, []);
+
   return {
     isDesktop,
     info,
@@ -132,5 +172,7 @@ export const useDesktopStorage = (): UseDesktopStorage => {
     reset,
     openFolder,
     refresh,
+    closeToTray,
+    setCloseToTray,
   };
 };

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Switch } from 'react-native';
 import {
   ArrowLeft,
   FolderOpen,
@@ -29,8 +30,18 @@ import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
 export const StorageSettingsScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  const { isDesktop, info, busy, error, choose, applyPath, reset, openFolder } =
-    useDesktopStorage();
+  const {
+    isDesktop,
+    info,
+    busy,
+    error,
+    choose,
+    applyPath,
+    reset,
+    openFolder,
+    closeToTray,
+    setCloseToTray,
+  } = useDesktopStorage();
   const [draft, setDraft] = useState('');
   const [savedHint, setSavedHint] = useState<string | null>(null);
 
@@ -155,6 +166,28 @@ export const StorageSettingsScreen = () => {
             {savedHint ? (
               <Text className="text-primary">{savedHint}</Text>
             ) : null}
+
+            <VStack space="sm">
+              <Text size="sm" className="text-muted-foreground">
+                Window behaviour
+              </Text>
+              <HStack className="items-center justify-between rounded-lg bg-card px-4 py-4">
+                <VStack className="flex-1">
+                  <Text className="text-foreground">Close to tray</Text>
+                  <Text size="xs" className="text-muted-foreground">
+                    Keep CoFFe House running in the notification area when the
+                    window is closed, so downloads continue. Use the tray menu
+                    to quit.
+                  </Text>
+                </VStack>
+                <Switch
+                  value={closeToTray}
+                  onValueChange={(value) => void setCloseToTray(value)}
+                  trackColor={{ true: '#E50914', false: '#2E2E2E' }}
+                  thumbColor="#FFFFFF"
+                />
+              </HStack>
+            </VStack>
           </VStack>
         </ScrollView>
       )}

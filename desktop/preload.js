@@ -9,6 +9,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const storageListeners = new Set();
 const scraperListeners = new Set();
 const downloadListeners = new Set();
+const preferencesListeners = new Set();
 
 ipcRenderer.on('desktop:storage-changed', (_event, payload) => {
   for (const fn of storageListeners) {
@@ -32,6 +33,16 @@ ipcRenderer.on('desktop:scraperMessage', (_event, payload) => {
 
 ipcRenderer.on('desktop:downloadProgress', (_event, payload) => {
   for (const fn of downloadListeners) {
+    try {
+      fn(payload);
+    } catch {
+      /* listener errors must not break the bridge */
+    }
+  }
+});
+
+ipcRenderer.on('desktop:preferences-changed', (_event, payload) => {
+  for (const fn of preferencesListeners) {
     try {
       fn(payload);
     } catch {
@@ -71,6 +82,17 @@ contextBridge.exposeInMainWorld('coffeDesktop', {
   minimize: () => ipcRenderer.invoke('desktop:minimize'),
   close: () => ipcRenderer.invoke('desktop:close'),
 
+  // --- shell preferences ----------------------------------------------------
+  /** { closeToTray } — closing the window hides it to the notification area. */
+  getPreferences: () => ipcRenderer.invoke('desktop:getPreferences'),
+  setPreferences: (patch) =>
+    ipcRenderer.invoke('desktop:setPreferences', patch),
+  /** Subscribe to preference changes made elsewhere (tray, menu). */
+  onPreferencesChanged: (fn) => {
+    preferencesListeners.add(fn);
+    return () => preferencesListeners.delete(fn);
+  },
+
   // --- stream scraper (hidden <webview> bridge) -----------------------------
   /** Installs the scraper hooks in a webview guest before page load. */
   attachScraper: (id, script) =>
@@ -100,4 +122,11 @@ contextBridge.exposeInMainWorld('coffeDesktop', {
     downloadListeners.add(fn);
     return () => downloadListeners.delete(fn);
   },
+
+  /**
+   * Writes an offline subtitle sidecar into `<storage>/downloads/<folder>/subs`.
+   * `text` is the WebVTT body fetched by the renderer.
+   */
+  saveSubtitle: (request) =>
+    ipcRenderer.invoke('desktop:saveSubtitle', request),
 });

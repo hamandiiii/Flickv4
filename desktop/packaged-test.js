@@ -4,7 +4,7 @@
  *
  * The MSI/unpacked build ships `resources/web` and a different ASAR layout, so
  * "it worked in dev" is not proof. This launches the real
- * `release/win-unpacked/CoFFe House.exe` with the DevTools protocol enabled,
+ * `release/win-unpacked/CoFFe House stream.exe` with the DevTools protocol enabled,
  * attaches over CDP, and checks that:
  *
  *   - the renderer loaded from the loopback server (not an error page),
@@ -19,7 +19,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const EXE = path.join(__dirname, 'release', 'win-unpacked', 'CoFFe House.exe');
+const EXE = path.join(__dirname, 'release', 'win-unpacked', 'CoFFe House stream.exe');
 const PORT = 9333;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -100,10 +100,19 @@ function evaluate(ws, id, expression) {
       ws,
       1,
       `(async () => {
-        // Give React a moment to paint.
-        await new Promise((r) => setTimeout(r, 2500));
-        const text = document.body ? document.body.innerText : '';
+        // Home content comes from TMDB, so a cold start (empty HTTP cache)
+        // paints the splash first. Poll for real content instead of assuming
+        // a fixed paint time — the old 2.5s sleep made this probe flaky.
+        const started = Date.now();
+        let text = '';
+        while (Date.now() - started < 30000) {
+          text = document.body ? document.body.innerText : '';
+          if (text.length > 200) break;
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        const waitedMs = Date.now() - started;
         return {
+          waitedMs,
           origin: window.location.origin,
           bridge: typeof window.coffeDesktop,
           bridgeVersion: window.coffeDesktop
@@ -126,7 +135,7 @@ function evaluate(ws, id, expression) {
       ['bridge exposed', state.bridge === 'object', state.bridge],
       ['app version', state.bridgeVersion && state.bridgeVersion.version === '1.1.0', JSON.stringify(state.bridgeVersion)],
       ['react mounted', state.rootChildren > 0, String(state.rootChildren)],
-      ['real content rendered', state.textLength > 200, String(state.textLength)],
+      ['real content rendered', state.textLength > 200, `${state.textLength} chars after ${state.waitedMs}ms`],
     ];
 
     for (const [name, pass, detail] of checks) {

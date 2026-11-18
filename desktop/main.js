@@ -15,7 +15,17 @@
  * The shell also owns the "storage location" feature: the user picks a folder,
  * it is persisted in userData, and every in-app download is routed there.
  */
-const { app, BrowserWindow, dialog, ipcMain, shell, session, Menu } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  shell,
+  session,
+  Menu,
+  Tray,
+  nativeImage,
+} = require('electron');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -48,6 +58,8 @@ const defaultStorageDir = () => path.join(app.getPath('downloads'), 'CoFFe House
 let settings = {
   storageDir: null,
   window: null,
+  /** Closing the window keeps the app alive in the notification area. */
+  closeToTray: true,
 };
 
 function loadSettings() {
@@ -107,6 +119,27 @@ function broadcastStorage() {
         dir: storageDir(),
         defaultDir: defaultStorageDir(),
       });
+    }
+  }
+}
+
+function preferences() {
+  return { closeToTray: settings.closeToTray !== false };
+}
+
+function setPreferences(patch) {
+  if (patch && typeof patch === 'object' && 'closeToTray' in patch) {
+    settings.closeToTray = patch.closeToTray !== false;
+    saveSettings();
+  }
+  broadcastPreferences();
+  return preferences();
+}
+
+function broadcastPreferences() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('desktop:preferences-changed', preferences());
     }
   }
 }
@@ -380,14 +413,30 @@ function parseHlsAttrs(line) {
   return out;
 }
 
-/** Stream a URL into a file, reporting bytes as they land. */
-async function streamToFile(url, filePath, headers, signal, onProgress, append = false) {
+/**
+ * Stream a URL into a file, reporting bytes as they land.
+ *
+ * `options.append` + `options.startOffset` resume a partial file: a `Range`
+ * request is sent and the bytes are appended. When the server ignores the
+ * range (200 instead of 206) the file is rewritten from scratch so the result
+ * is never a corrupt concatenation.
+ */
+async function streamToFile(url, filePath, headers, signal, onProgress, options = {}) {
+  const { append = false, startOffset = 0 } = options;
+  const requestHeaders = withHeaders(headers);
+  if (append && startOffset > 0) {
+    requestHeaders.Range = `bytes=${startOffset}-`;
+  }
   const res = await fetch(url, {
-    headers: withHeaders(headers),
+    headers: requestHeaders,
     signal,
     redirect: 'follow',
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  if (!res.ok && res.status !== 206) {
+    throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  }
+  const appended = append && startOffset > 0 && res.status === 206;
+  const base = appended ? startOffset : 0;
   const total = Number(res.headers.get('content-length') || 0);
   let received = 0;
   let last = 0;
@@ -397,7 +446,7 @@ async function streamToFile(url, filePath, headers, signal, onProgress, append =
       const now = Date.now();
       if (now - last > 250) {
         last = now;
-        onProgress(received, total);
+        onProgress(base + received, total ? base + total : 0);
       }
       callback(null, chunk);
     },
@@ -405,9 +454,9 @@ async function streamToFile(url, filePath, headers, signal, onProgress, append =
   await pipeline(
     Readable.fromWeb(res.body),
     counter,
-    fs.createWriteStream(filePath, { flags: append ? 'a' : 'w' }),
+    fs.createWriteStream(filePath, { flags: appended ? 'a' : 'w' }),
   );
-  return { received, total };
+  return { received, total, appended, bytes: base + received };
 }
 
 /**
@@ -419,7 +468,7 @@ async function streamToFile(url, filePath, headers, signal, onProgress, append =
  * requests. MPEG-TS is kept as-is — Chromium cannot play a bare `.ts` file, so
  * remuxing is deliberately avoided and playback stays HLS.
  */
-async function downloadHls({ url, headers, dir, signal, onProgress }) {
+async function downloadHls({ url, headers, dir, signal, onProgress, resume = false }) {
   const crypto = require('crypto');
   let playlistUrl = url;
   let text = await fetchText(playlistUrl, headers, signal);
@@ -526,8 +575,21 @@ async function downloadHls({ url, headers, dir, signal, onProgress }) {
 
   if (mapUrl) {
     const initPath = path.join(dir, 'init.mp4');
-    await streamToFile(mapUrl, initPath, headers, signal, () => {});
-    received += fs.statSync(initPath).size;
+    let reused = 0;
+    if (resume) {
+      try {
+        const stat = fs.statSync(initPath);
+        if (stat.isFile() && stat.size > 0) reused = stat.size;
+      } catch {
+        /* not downloaded yet */
+      }
+    }
+    if (reused > 0) {
+      received += reused;
+    } else {
+      await streamToFile(mapUrl, initPath, headers, signal, () => {});
+      received += fs.statSync(initPath).size;
+    }
   }
 
   report();
@@ -536,6 +598,22 @@ async function downloadHls({ url, headers, dir, signal, onProgress }) {
     if (signal.aborted) throw new Error('cancelled');
     const segment = segments[i];
     const filePath = path.join(dir, segmentName(i));
+
+    // Resume: a segment that already landed on disk is kept as-is. Segment
+    // names are deterministic (`seg_00001.ts`), so this is safe across runs.
+    if (resume) {
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.isFile() && stat.size > 0) {
+          received += stat.size;
+          completed += 1;
+          report();
+          continue;
+        }
+      } catch {
+        /* segment missing — download it below */
+      }
+    }
 
     if (segment.key && segment.key.method === 'AES-128') {
       const key = await keyBytes(segment.key);
@@ -604,7 +682,7 @@ async function downloadHls({ url, headers, dir, signal, onProgress }) {
 }
 
 /** Download a progressive file (mp4/webm/mkv) into the job folder. */
-async function downloadDirect({ url, headers, dir, signal, onProgress }) {
+async function downloadDirect({ url, headers, dir, signal, onProgress, resume = false }) {
   let ext = 'mp4';
   try {
     const match = /\.([a-z0-9]{2,4})$/i.exec(new URL(url).pathname);
@@ -616,23 +694,55 @@ async function downloadDirect({ url, headers, dir, signal, onProgress }) {
   }
 
   const file = `video.${ext}`;
-  const result = await streamToFile(
+  const finalPath = path.join(dir, file);
+  // Bytes go to `video.<ext>.part` first so an interrupted download can be
+  // resumed with a Range request instead of starting over.
+  const partPath = `${finalPath}.part`;
+
+  let startOffset = 0;
+  if (resume) {
+    try {
+      const stat = fs.statSync(partPath);
+      if (stat.isFile() && stat.size > 0) startOffset = stat.size;
+    } catch {
+      /* nothing to resume */
+    }
+  } else {
+    try {
+      fs.rmSync(partPath, { force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  await streamToFile(
     url,
-    path.join(dir, file),
+    partPath,
     headers,
     signal,
     (received, total) =>
       onProgress({ received, total, completedSegments: 1, totalSegments: 1 }),
+    { append: startOffset > 0, startOffset },
   );
 
-  return { file, kind: 'file', bytes: result.received, segments: 1 };
+  const bytes = fs.statSync(partPath).size;
+  try {
+    fs.rmSync(finalPath, { force: true });
+  } catch {
+    /* ignore */
+  }
+  fs.renameSync(partPath, finalPath);
+
+  return { file, kind: 'file', bytes, segments: 1 };
 }
 
-function startDownload({ id, url, dirName, headers, kind }) {
+function startDownload({ id, url, dirName, headers, kind, resume = false }) {
   return (async () => {
     const dir = path.join(downloadRoot(), safeName(dirName || id));
     try {
-      await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
+      if (!resume) {
+        await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
+      }
       await fs.promises.mkdir(dir, { recursive: true });
     } catch (err) {
       return { ok: false, error: `Cannot create download folder: ${err.message}` };
@@ -657,6 +767,7 @@ function startDownload({ id, url, dirName, headers, kind }) {
             headers,
             dir,
             signal: controller.signal,
+            resume,
             onProgress: (progress) => send({ status: 'downloading', ...progress }),
           })
         : await downloadDirect({
@@ -664,6 +775,7 @@ function startDownload({ id, url, dirName, headers, kind }) {
             headers,
             dir,
             signal: controller.signal,
+            resume,
             onProgress: (progress) => send({ status: 'downloading', ...progress }),
           });
 
@@ -752,7 +864,96 @@ function createWindow() {
     mainWindow = null;
   });
 
+  // Tray mode: closing the window keeps playback/downloads alive in the
+  // notification area. "Quit" from the tray menu really exits. If the tray
+  // cannot be created the close falls through to a normal exit.
+  mainWindow.on('close', (event) => {
+    if (app.isQuitting || !preferences().closeToTray) return;
+    ensureTray();
+    if (!tray) return;
+    event.preventDefault();
+    mainWindow.hide();
+  });
+
   mainWindow.loadURL(`http://127.0.0.1:${serverPort}/`);
+}
+
+// ---------------------------------------------------------------------------
+// Tray (close-to-tray)
+// ---------------------------------------------------------------------------
+
+let tray = null;
+
+function trayImage() {
+  let image = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png'));
+  if (!image.isEmpty()) image = image.resize({ width: 16, height: 16 });
+  return image;
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function trayMenu() {
+  return Menu.buildFromTemplate([
+    { label: 'Open CoFFe House', click: () => showMainWindow() },
+    { type: 'separator' },
+    {
+      label: 'Open storage folder',
+      click: () => {
+        ensureDir(storageDir());
+        void shell.openPath(storageDir());
+      },
+    },
+    {
+      label: 'Open downloads folder',
+      click: () => {
+        ensureDir(downloadRoot());
+        void shell.openPath(downloadRoot());
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+}
+
+function ensureTray() {
+  if (tray) return;
+  const image = trayImage();
+  if (image.isEmpty()) {
+    // Never let a missing icon break the shell; close-to-tray just falls back
+    // to a normal close (the window is still hidden, the app keeps running).
+    console.warn('[coffe] tray icon missing — skipping tray');
+    return;
+  }
+  try {
+    tray = new Tray(image);
+  } catch (err) {
+    console.error('[coffe] tray unavailable:', err);
+    return;
+  }
+  tray.setToolTip('CoFFe House');
+  tray.setContextMenu(trayMenu());
+  tray.on('click', () => showMainWindow());
+  tray.on('double-click', () => showMainWindow());
+}
+
+function destroyTray() {
+  if (!tray) return;
+  tray.destroy();
+  tray = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -826,6 +1027,49 @@ function registerIpc() {
   ipcMain.handle('desktop:minimize', () => mainWindow && mainWindow.minimize());
   ipcMain.handle('desktop:close', () => mainWindow && mainWindow.close());
 
+  // Shell preferences (currently only close-to-tray).
+  ipcMain.handle('desktop:getPreferences', () => preferences());
+  ipcMain.handle('desktop:setPreferences', (_event, patch) => setPreferences(patch));
+
+  /**
+   * Offline subtitles: the renderer fetches the WebVTT text and hands it here,
+   * so the sidecar lands next to the downloaded video (`subs/<lang>.vtt`).
+   * Kept separate from the download engine because captions are optional and
+   * must never fail a completed download.
+   */
+  ipcMain.handle('desktop:saveSubtitle', async (_event, request) => {
+    if (!request || typeof request !== 'object') {
+      return { ok: false, error: 'Invalid subtitle request' };
+    }
+    const { folder, language, text } = request;
+    if (typeof folder !== 'string' || !folder) {
+      return { ok: false, error: 'Missing download folder' };
+    }
+    if (typeof text !== 'string' || !text.trim()) {
+      return { ok: false, error: 'Empty subtitle text' };
+    }
+    const lang = safeName(
+      String(language || 'und')
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, ''),
+      'und',
+    );
+    const root = path.resolve(downloadRoot());
+    const dir = path.resolve(root, safeName(folder));
+    if (!dir.startsWith(root + path.sep)) {
+      return { ok: false, error: 'forbidden' };
+    }
+    try {
+      const subsDir = path.join(dir, 'subs');
+      await fs.promises.mkdir(subsDir, { recursive: true });
+      const file = `${lang}.vtt`;
+      await fs.promises.writeFile(path.join(subsDir, file), text, 'utf8');
+      return { ok: true, file: `subs/${file}` };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err) };
+    }
+  });
+
   // Stream scraper: the renderer owns a hidden <webview>, the main process
   // injects the hook script before page load and forwards the findings back.
   ipcMain.handle('desktop:scraperAttach', async (event, id, script) => {
@@ -862,6 +1106,7 @@ function registerIpc() {
       dirName: folder || id,
       headers: headers && typeof headers === 'object' ? headers : undefined,
       kind: kind === 'hls' || kind === 'file' ? kind : undefined,
+      resume: request.resume === true,
     });
   });
 
@@ -912,10 +1157,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    showMainWindow();
   });
 
   app.whenReady().then(async () => {
@@ -977,17 +1219,23 @@ if (!app.requestSingleInstanceLock()) {
     }
 
     createWindow();
+    ensureTray();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      else showMainWindow();
     });
   });
 
   app.on('window-all-closed', () => {
-    app.quit();
+    // With close-to-tray enabled the window is hidden rather than destroyed,
+    // so this only fires for a real close/quit.
+    if (!preferences().closeToTray || app.isQuitting) app.quit();
   });
 
   app.on('before-quit', () => {
+    app.isQuitting = true;
     scraperBridge.detachAll();
+    destroyTray();
   });
 }

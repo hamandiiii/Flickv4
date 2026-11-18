@@ -66,10 +66,15 @@ const MASTER = [
   '',
 ].join('\n');
 
+/** Request counters — used to prove a resumed download skips saved bytes. */
+const HITS = {};
+const RANGES = [];
+
 function startServer() {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const { pathname } = new URL(req.url, 'http://127.0.0.1');
+      HITS[pathname] = (HITS[pathname] || 0) + 1;
 
       if (pathname === '/master.m3u8') {
         res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
@@ -79,6 +84,23 @@ function startServer() {
       if (pathname === '/high/index.m3u8' || pathname === '/low/index.m3u8') {
         res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
         res.end(mediaPlaylist());
+        return;
+      }
+      // Isolated copy of the same ladder for the resume probe, so request
+      // counters cannot be confused with the first (fresh) download.
+      if (pathname === '/resume/index.m3u8') {
+        res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+        res.end(mediaPlaylist());
+        return;
+      }
+      const rseg = /^\/resume\/seg_(\d)\.ts$/.exec(pathname);
+      if (rseg) {
+        const body = encrypt(PLAINTEXTS[Number(rseg[1])]);
+        res.writeHead(200, {
+          'Content-Type': 'video/mp2t',
+          'Content-Length': body.length,
+        });
+        res.end(body);
         return;
       }
       if (pathname === '/key.bin') {
@@ -119,6 +141,22 @@ function startServer() {
         return;
       }
       if (pathname === '/prog.mp4') {
+        const range = req.headers.range;
+        if (range) {
+          RANGES.push(range);
+          const match = /^bytes=(\d+)-$/.exec(range);
+          if (match) {
+            const start = Number(match[1]);
+            const slice = DIRECT_BYTES.subarray(start);
+            res.writeHead(206, {
+              'Content-Type': 'video/mp4',
+              'Content-Length': slice.length,
+              'Content-Range': `bytes ${start}-${DIRECT_BYTES.length - 1}/${DIRECT_BYTES.length}`,
+            });
+            res.end(slice);
+            return;
+          }
+        }
         res.writeHead(200, {
           'Content-Type': 'video/mp4',
           'Content-Length': DIRECT_BYTES.length,
@@ -141,6 +179,21 @@ app.whenReady().then(async () => {
 
   const tempStorage = path.join(os.tmpdir(), `coffe-dl-${Date.now()}`);
   fs.mkdirSync(tempStorage, { recursive: true });
+
+  // Resume fixtures: one HLS segment and the first 1000 bytes of a direct
+  // file already on disk. A `resume: true` start must keep them.
+  const hlsResumeId = 'movie-1002-q1080';
+  const hlsResumeDir = path.join(tempStorage, 'downloads', hlsResumeId);
+  fs.mkdirSync(hlsResumeDir, { recursive: true });
+  fs.writeFileSync(path.join(hlsResumeDir, 'seg_00002.ts'), PLAINTEXTS[1]);
+
+  const fileResumeId = 'movie-1003-q720';
+  const fileResumeDir = path.join(tempStorage, 'downloads', fileResumeId);
+  fs.mkdirSync(fileResumeDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(fileResumeDir, 'video.mp4.part'),
+    DIRECT_BYTES.subarray(0, 1000),
+  );
 
   let win = null;
   for (let i = 0; i < 200 && !win; i += 1) {
@@ -235,6 +288,53 @@ app.whenReady().then(async () => {
       out.fileLength = (await res.arrayBuffer()).byteLength;
     }
 
+    // ---- Offline subtitle sidecar ---------------------------------------
+    out.subtitleSave = await window.coffeDesktop.saveSubtitle({
+      folder: hlsId,
+      language: 'en',
+      text: 'WEBVTT\\n\\n00:00:01.000 --> 00:00:02.000\\nHello offline\\n',
+    });
+    if (out.subtitleSave && out.subtitleSave.ok) {
+      const res = await fetch(
+        window.location.origin + '/__media/' + encodeURIComponent(hlsId) + '/' +
+        encodeURIComponent(out.subtitleSave.file),
+      );
+      out.subtitleStatus = res.status;
+      out.subtitleBody = await res.text();
+    }
+    out.subtitleEmpty = await window.coffeDesktop.saveSubtitle({
+      folder: hlsId,
+      language: 'en',
+      text: '   ',
+    });
+
+    // ---- Resume ----------------------------------------------------------
+    out.hlsResumeStart = await window.coffeDesktop.downloadStart({
+      id: 'movie-1002-q1080',
+      url: ${JSON.stringify(`${base}/resume/index.m3u8`)},
+      folder: 'movie-1002-q1080',
+      kind: 'hls',
+      resume: true,
+    });
+    out.hlsResumeDone = await waitFor('movie-1002-q1080', ['completed', 'failed']);
+
+    out.fileResumeStart = await window.coffeDesktop.downloadStart({
+      id: 'movie-1003-q720',
+      url: ${JSON.stringify(`${base}/prog.mp4`)},
+      folder: 'movie-1003-q720',
+      kind: 'file',
+      resume: true,
+    });
+    out.fileResumeDone = await waitFor('movie-1003-q720', ['completed', 'failed']);
+    if (out.fileResumeDone.status === 'completed') {
+      const res = await fetch(
+        window.location.origin + '/__media/movie-1003-q720/' +
+        encodeURIComponent(out.fileResumeDone.file || 'video.mp4'),
+      );
+      out.fileResumeStatus = res.status;
+      out.fileResumeBytes = (await res.arrayBuffer()).byteLength;
+    }
+
     // ---- Cancel + remove -------------------------------------------------
     const cancelId = 'movie-1001-q1080';
     await window.coffeDesktop.downloadStart({
@@ -252,6 +352,8 @@ app.whenReady().then(async () => {
     out.removeHls = await window.coffeDesktop.downloadRemove(hlsId);
     out.removeFile = await window.coffeDesktop.downloadRemove(fileId);
     out.removeCancel = await window.coffeDesktop.downloadRemove(cancelId);
+    out.removeHlsResume = await window.coffeDesktop.downloadRemove('movie-1002-q1080');
+    out.removeFileResume = await window.coffeDesktop.downloadRemove('movie-1003-q720');
 
     off();
     await window.coffeDesktop.resetStorage();
@@ -307,6 +409,62 @@ app.whenReady().then(async () => {
   );
   check('cancel accepted', result.cancelAccepted === true, '');
   check('cancel event reported', (result.cancelEvent || []).includes('cancelled'), JSON.stringify(result.cancelEvent));
+
+  // ---- Offline subtitles -------------------------------------------------
+  check(
+    'subtitle sidecar saved',
+    result.subtitleSave && result.subtitleSave.ok === true,
+    JSON.stringify(result.subtitleSave),
+  );
+  check(
+    'subtitle served to the player',
+    result.subtitleStatus === 200 && /^WEBVTT/.test(result.subtitleBody || ''),
+    `status ${result.subtitleStatus}`,
+  );
+  check(
+    'empty subtitle rejected',
+    result.subtitleEmpty && result.subtitleEmpty.ok === false,
+    JSON.stringify(result.subtitleEmpty),
+  );
+
+  // ---- Resume ------------------------------------------------------------
+  check(
+    'hls resume completed',
+    result.hlsResumeDone.status === 'completed',
+    result.hlsResumeDone.error || '',
+  );
+  check(
+    'hls resume kept the saved segment',
+    (HITS['/resume/seg_1.ts'] || 0) === 0,
+    `seg_1 hits: ${HITS['/resume/seg_1.ts'] || 0}`,
+  );
+  check(
+    'hls resume fetched the missing segments',
+    HITS['/resume/seg_0.ts'] === 1 && HITS['/resume/seg_2.ts'] === 1,
+    JSON.stringify({
+      seg_0: HITS['/resume/seg_0.ts'] || 0,
+      seg_2: HITS['/resume/seg_2.ts'] || 0,
+    }),
+  );
+  check(
+    'direct resume completed',
+    result.fileResumeDone.status === 'completed',
+    result.fileResumeDone.error || '',
+  );
+  check(
+    'direct resume asked for the remaining range',
+    RANGES.includes('bytes=1000-'),
+    JSON.stringify(RANGES),
+  );
+  check(
+    'direct resume produced an intact file',
+    result.fileResumeStatus === 200 &&
+      result.fileResumeBytes === DIRECT_BYTES.length,
+    `status ${result.fileResumeStatus}, ${result.fileResumeBytes} bytes`,
+  );
+  check('remove resumed hls folder', result.removeHlsResume === true, '');
+  check('remove resumed file folder', result.removeFileResume === true, '');
+
   check('remove hls folder', result.removeHls === true, '');
   check('remove file folder', result.removeFile === true, '');
   check('remove cancelled folder', result.removeCancel === true, '');

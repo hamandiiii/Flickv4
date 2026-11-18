@@ -21,6 +21,11 @@ export interface DesktopInfo {
   isDev: boolean;
 }
 
+export interface DesktopPreferences {
+  /** Closing the window hides the app to the notification area. */
+  closeToTray: boolean;
+}
+
 export interface DesktopScraperMessage {
   /** webContents id of the guest that posted the message. */
   id: number;
@@ -36,6 +41,20 @@ export interface DesktopDownloadRequest {
   folder?: string;
   headers?: Record<string, string>;
   kind?: 'hls' | 'file';
+  /**
+   * Keep the bytes already on disk and continue from there (segments for HLS,
+   * a `.part` file for direct downloads) instead of starting over.
+   */
+  resume?: boolean;
+}
+
+export interface DesktopSaveSubtitleRequest {
+  /** Job folder inside `<storage>/downloads`. */
+  folder: string;
+  /** ISO 639-1 language code — used as the file name. */
+  language: string;
+  /** WebVTT body. */
+  text: string;
 }
 
 export type DesktopDownloadStatus =
@@ -79,6 +98,10 @@ export interface CoffeDesktopBridge {
   toggleFullscreen(): Promise<boolean>;
   minimize(): Promise<void>;
   close(): Promise<void>;
+  /** Shell preferences (close-to-tray). */
+  getPreferences(): Promise<DesktopPreferences>;
+  setPreferences(patch: Partial<DesktopPreferences>): Promise<DesktopPreferences>;
+  onPreferencesChanged(fn: (prefs: DesktopPreferences) => void): () => void;
   /** Installs the scraper hooks inside a `<webview>` guest. */
   attachScraper(id: number, script: string): Promise<boolean>;
   /** Removes the hooks and detaches the debugger. */
@@ -95,6 +118,10 @@ export interface CoffeDesktopBridge {
   downloadReveal(folder?: string): Promise<{ ok: boolean; error?: string }>;
   /** Subscribe to download progress events. */
   onDownloadProgress(fn: (progress: DesktopDownloadProgress) => void): () => void;
+  /** Writes an offline subtitle sidecar next to a completed download. */
+  saveSubtitle(
+    request: DesktopSaveSubtitleRequest,
+  ): Promise<{ ok: boolean; file?: string; error?: string }>;
 }
 
 declare global {

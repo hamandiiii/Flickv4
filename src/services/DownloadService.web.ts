@@ -3,6 +3,8 @@ import type { ReactVideoSource } from 'react-native-video';
 import type { PlaybackServer } from '@/src/hooks/useServers';
 import type { ServerResolver } from '@/src/services/playbackHeaders';
 import { STREAMFLIX_PLAYBACK_HEADERS } from '@/src/services/StreamflixService';
+import { VdrkSubtitleService } from '@/src/services/VdrkSubtitleService';
+import { WyzieService } from '@/src/services/WyzieService';
 import type { MediaItem } from '@/src/types';
 import { originOf } from '@/src/utils/streamUrl';
 
@@ -195,9 +197,9 @@ class DownloadServiceImpl {
       if (raw) {
         const parsed = JSON.parse(raw) as DownloadJob[];
         for (const job of parsed) {
-          // A job that was mid-flight when the app closed cannot be resumed
-          // where it stopped (the shell restarts downloads from scratch), so
-          // it is surfaced as paused and the user decides.
+          // A job that was mid-flight when the app closed keeps its partial
+          // files on disk; it is surfaced as paused and resumed from where it
+          // stopped (HLS skips finished segments, direct files use `.part`).
           if (
             job.status === 'downloading' ||
             job.status === 'resolving' ||
@@ -254,6 +256,9 @@ class DownloadServiceImpl {
           totalSegments: progress.totalSegments ?? job.totalSegments,
           error: undefined,
         });
+        // Captions are optional: the video is already playable offline, so a
+        // failed/slow Wyzie lookup must never change the job status.
+        void this.bundleSubtitle(progress.id);
         return;
       }
 
@@ -368,6 +373,9 @@ class DownloadServiceImpl {
         existing.status === 'failed'
       ) {
         const streamUri = opts.streamUri ?? existing.streamUri;
+        // Only keep partial files when the stream URL is unchanged; a new
+        // URL may use different segment names/keys.
+        const canResume = !!existing.streamUri && existing.streamUri === streamUri;
         this.updateJob(id, {
           streamUri,
           kind,
@@ -380,7 +388,7 @@ class DownloadServiceImpl {
           error: undefined,
           status: 'queued',
         });
-        void this.start(id, streamUri, kind).catch((e) =>
+        void this.start(id, streamUri, kind, canResume).catch((e) =>
           log('start failed for', id, e),
         );
         return this.jobs.get(id)!;
@@ -420,7 +428,7 @@ class DownloadServiceImpl {
     this.persist();
     this.emit();
 
-    void this.start(id, opts.streamUri, kind).catch((e) =>
+    void this.start(id, opts.streamUri, kind, false).catch((e) =>
       log('start failed for', id, e),
     );
 
@@ -457,7 +465,9 @@ class DownloadServiceImpl {
     this.updateJob(id, { status: 'queued', error: undefined });
 
     const latest = this.jobs.get(id) ?? job;
-    void this.start(latest.id, latest.streamUri, latest.kind).catch((e) =>
+    // Resume keeps the segments/`.part` bytes already on disk instead of
+    // re-downloading the whole stream.
+    void this.start(latest.id, latest.streamUri, latest.kind, true).catch((e) =>
       log('resume failed for', id, e),
     );
   }
@@ -498,6 +508,7 @@ class DownloadServiceImpl {
     id: string,
     streamUri: string | undefined,
     kind: 'hls' | 'file',
+    resume = false,
   ): Promise<void> {
     const desktop = bridge();
     if (!desktop) {
@@ -550,6 +561,7 @@ class DownloadServiceImpl {
       folder: id,
       headers: job.headers,
       kind,
+      resume,
     });
 
     if (!result?.ok) {
@@ -566,6 +578,78 @@ class DownloadServiceImpl {
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
+
+  /**
+   * Writes the preferred-language WebVTT sidecar next to a completed download
+   * so captions keep working with the network off. Soft-fails on purpose: the
+   * video is already playable, and the player just shows no offline tracks.
+   */
+  private async bundleSubtitle(id: string): Promise<void> {
+    const job = this.jobs.get(id);
+    if (!job || job.status !== 'completed') return;
+    const desktop = bridge();
+    if (!desktop?.saveSubtitle) return;
+
+    const language = job.subtitleLanguage?.trim();
+    if (!language || job.subtitles?.length) return;
+
+    try {
+      // Same catalog pair the online player uses: Vdrk is keyless, Wyzie adds
+      // the language-filtered extras. Both return WebVTT.
+      const [wyzie, vdrk] = await Promise.allSettled([
+        WyzieService.searchSubtitles({
+          tmdbId: job.item.id,
+          season: job.season,
+          episode: job.episode,
+          language,
+          format: 'vtt',
+        }),
+        VdrkSubtitleService.searchSubtitles({
+          tmdbId: job.item.id,
+          season: job.season,
+          episode: job.episode,
+        }),
+      ]);
+      const tracks = [
+        ...(vdrk.status === 'fulfilled' ? vdrk.value : []),
+        ...(wyzie.status === 'fulfilled' ? wyzie.value : []),
+      ];
+      if (!tracks.length) {
+        log('no subtitle tracks for', id, language);
+        return;
+      }
+      const track =
+        tracks.find((t) => t.language === language && !t.isHearingImpaired) ??
+        tracks.find((t) => t.language === language) ??
+        tracks.find((t) => !t.isHearingImpaired) ??
+        tracks[0];
+
+      const text = await WyzieService.fetchSubtitleText(track.url);
+      if (!text.trim()) return;
+
+      const folder = folderOf(job);
+      const saved = await desktop.saveSubtitle({ folder, language, text });
+      if (!saved?.ok || !saved.file) {
+        log('subtitle save failed for', id, saved?.error);
+        return;
+      }
+
+      this.updateJob(id, {
+        subtitles: [
+          {
+            id: track.id,
+            language: track.language || language,
+            display: track.display,
+            localUri: mediaFileUrl(folder, saved.file),
+            isHearingImpaired: track.isHearingImpaired,
+          },
+        ],
+      });
+      log('wrote offline subtitle', id, saved.file);
+    } catch (e) {
+      log('subtitle bundling soft-failed for', id, e);
+    }
+  }
 
   private updateJob(id: string, patch: Partial<DownloadJob>): void {
     const current = this.jobs.get(id);

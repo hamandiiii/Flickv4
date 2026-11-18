@@ -21,7 +21,7 @@ desktop/
   preload.js           window.coffeDesktop bridge (contextIsolation, no node in renderer)
   scraper-bridge.js    CDP injection for <webview> guests
   package.json         electron-builder config (MSI + NSIS)
-  build/icon.png       installer icon (checked in — un-ignored in .gitignore)
+  build/icon.png       app/installer/tray icon (checked in — un-ignored in .gitignore)
   *-test.js            dev probes, run with the local electron binary
 ```
 
@@ -56,6 +56,29 @@ is what lands on disk. Master playlists are followed to the highest-bandwidth
 variant **excluding HEVC** (`hev1|hvc1|dvh1|dvhe`), because Chromium cannot
 decode HEVC.
 
+## Install layout
+
+The MSI is per-user (`%LOCALAPPDATA%\Programs`) and installs into a folder named
+**`CoFFe House stream`** — set via `win.executableName`, which drives both the
+EXE name and the WiX `INSTALLDIR` — so it never collides with another project
+called "CoFFe House". `productName` stays `CoFFe House`, so the ARP entry,
+shortcuts and window title are unchanged.
+
+## Shell features
+
+- **Close to tray.** Closing the window hides it (downloads keep running); the
+  tray menu can reopen it, open the storage/downloads folders, or quit. Toggle
+  in Settings → Storage location → *Close to tray*; persisted in
+  `userData/desktop-settings.json`.
+- **Resumable downloads.** A paused/interrupted job keeps its bytes:
+  HLS skips segments already on disk, direct files continue from
+  `video.<ext>.part` with a `Range: bytes=N-` request (a server that ignores
+  the range restarts cleanly rather than appending garbage).
+- **Offline subtitles.** After a job completes, the preferred language is
+  fetched from the Vdrk catalog (keyless) with Wyzie as a second source and
+  written to `<folder>/subs/<lang>.vtt`, served through `/__media/` like the
+  video. Soft-fails — the video stays playable without captions.
+
 ## Build
 
 ```powershell
@@ -66,7 +89,7 @@ npx expo export --platform web --output-dir dist-web --clear
 cd desktop
 $env:CSC_IDENTITY_AUTO_DISCOVERY='false'
 npm run dist:msi     # -> release/CoFFeHouse-Setup-1.1.0.msi
-                     #    release/win-unpacked/CoFFe House.exe
+                     #    release/win-unpacked/CoFFe House stream.exe
 ```
 
 `extraResources` copies `../dist-web` into `resources/web`, so the MSI always
@@ -79,7 +102,7 @@ boots the real shell):
 
 ```powershell
 cd desktop
-.\node_modules\electron\dist\electron.exe download-test.js    # 18 checks
+.\node_modules\electron\dist\electron.exe download-test.js    # 29 checks (incl. resume + subtitles)
 .\node_modules\electron\dist\electron.exe playback-test.js    # real HLS playback
 .\node_modules\electron\dist\electron.exe persistence-test.js --write
 .\node_modules\electron\dist\electron.exe persistence-test.js --read
@@ -97,11 +120,8 @@ node --stack-size=16000 node_modules/typescript/lib/tsc.js --noEmit
 
 ## Known gaps (v1)
 
-- **Offline downloads have no subtitles.** Native bundles Wyzie subtitles next
-  to the media; the desktop job saves video only. Online subtitle search still
-  works while the machine is connected.
 - **No auto-update.** Reinstall the MSI to move versions.
 - **No code signing.** Windows SmartScreen will warn on first run
   (*More info → Run anyway*).
-- Downloads do not resume after the app is closed; a job interrupted mid-flight
-  is shown as paused and restarts from the beginning.
+- Resume keeps bytes only when the stream URL is unchanged; a job whose server
+  URL changed restarts from scratch.

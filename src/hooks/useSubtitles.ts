@@ -175,9 +175,12 @@ export const useSubtitles = ({
 
     const load = async () => {
       try {
-        const text = isLocal
-          ? await new File(uri).text()
-          : await WyzieService.fetchSubtitleText(uri);
+        // Desktop downloads serve their sidecars over the shell's loopback
+        // HTTP server, so those are fetched instead of read from disk.
+        const text =
+          isLocal && !/^https?:/i.test(uri)
+            ? await new File(uri).text()
+            : await WyzieService.fetchSubtitleText(uri);
         if (!cancelled) setCues(parseSubtitleText(text));
       } catch {
         if (!cancelled) setCues([]);

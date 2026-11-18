@@ -28,7 +28,8 @@
       "main.js",
       "preload.js",
       "scraper-bridge.js",
-      "package.json"
+      "package.json",
+      "build/icon.png"
     ],
     "extraResources": [
       {
@@ -44,6 +45,7 @@
         "msi"
       ],
       "icon": "build/icon.png",
+      "executableName": "CoFFe House stream",
       "artifactName": "CoFFeHouse-Setup-${version}.${ext}"
     },
     "msi": {

@@ -13,6 +13,7 @@
  */
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const OUT_DIR = path.join(__dirname, 'smoke');
@@ -68,11 +69,7 @@ app.whenReady().then(async () => {
   );
   console.log('[storage before]', JSON.stringify(storageBefore));
 
-  const probeDir = path.join(
-    app.getPath('desktop'),
-    'CoFFe House',
-    '_probe-storage',
-  );
+  const probeDir = path.join(os.tmpdir(), 'coffe-smoke-storage');
   const storageSet = await win.webContents.executeJavaScript(
     `window.coffeDesktop.setStorage(${JSON.stringify(probeDir)})`,
   );
@@ -87,6 +84,29 @@ app.whenReady().then(async () => {
     'window.coffeDesktop.resetStorage()',
   );
   console.log('[storage reset]', JSON.stringify(storageReset));
+
+  // 1b. Preferences round-trip (close-to-tray), persisted by the shell.
+  const prefsBefore = await win.webContents.executeJavaScript(
+    'window.coffeDesktop.getPreferences()',
+  );
+  console.log('[prefs before]', JSON.stringify(prefsBefore));
+  const prefsOff = await win.webContents.executeJavaScript(
+    'window.coffeDesktop.setPreferences({ closeToTray: false })',
+  );
+  const prefsRead = await win.webContents.executeJavaScript(
+    'window.coffeDesktop.getPreferences()',
+  );
+  const prefsOn = await win.webContents.executeJavaScript(
+    'window.coffeDesktop.setPreferences({ closeToTray: true })',
+  );
+  console.log('[prefs off]', JSON.stringify(prefsOff));
+  console.log('[prefs read]', JSON.stringify(prefsRead));
+  console.log('[prefs on]', JSON.stringify(prefsOn));
+  const prefsOk =
+    prefsOff.closeToTray === false &&
+    prefsRead.closeToTray === false &&
+    prefsOn.closeToTray === true;
+  console.log(`${prefsOk ? 'PASS' : 'FAIL'}  close-to-tray preference round-trip`);
 
   // 2. Navigate: Home -> Settings -> Storage location.
   const clickByLabel = async (label) => {
@@ -141,5 +161,6 @@ app.whenReady().then(async () => {
   fs.writeFileSync(path.join(OUT_DIR, 'settings.png'), image.toPNG());
   fs.writeFileSync(path.join(OUT_DIR, 'console.log'), logs.join('\n'), 'utf8');
 
-  process.exit(0);
+  fs.rmSync(probeDir, { recursive: true, force: true });
+  process.exit(prefsOk ? 0 : 1);
 });
